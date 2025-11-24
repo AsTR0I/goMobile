@@ -1,0 +1,24 @@
+sipserver:
+  port: 5060
+  acl: 
+    ip: ["127.0.0.1"]
+webserver:
+  port: 8080
+logging:
+  directory: logs
+  retain_days: 2
+flags:
+  debug: true
+data:
+  policy:
+    api: "http://localhost:8080/policy"
+    policy_dir: "temp/backup/policies"
+  fnm:
+    fnm_dir: temp/backup/fnms
+services:
+  db:
+    mysql:
+      host: localhost
+      port: 3306
+      user: root
+      database: cocobri
