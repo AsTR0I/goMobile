@@ -7,10 +7,10 @@ import (
 )
 
 type RequestMeta struct {
-	CallID string // для SIP
+	CallID string
 	Method string // INVITE, OPTIONS, POST и т.д.
-	Source string // IP или клиент
-	Body   string // опциональное тело запроса (SIP или HTTP)
+	Source string
+	Body   string
 }
 
 type Responder interface {

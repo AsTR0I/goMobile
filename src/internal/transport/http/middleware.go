@@ -13,15 +13,12 @@ func (h *HTTPServer) initMiddleware() {
 }
 
 func (h *HTTPServer) authMiddleware() gin.HandlerFunc {
-	// Берём токен из окружения
 	expectedToken := os.Getenv("HTTP_TOKEN")
 
 	return func(c *gin.Context) {
-		// Получаем токен из заголовка
 		providedToken := c.Query("token")
 
 		if expectedToken == "" {
-			// Если токен не настроен, можно разрешить или запретить все запросы
 			logrus.Warn("HTTP_TOKEN not set in environment")
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "server misconfiguration"})
 			c.Abort()
@@ -34,7 +31,6 @@ func (h *HTTPServer) authMiddleware() gin.HandlerFunc {
 			return
 		}
 
-		// Всё ок, продолжаем обработку
 		c.Next()
 	}
 }

@@ -70,14 +70,12 @@ func (r *FnmRepository) FindFnmMatches(numA, numB, callID string) FnmMatchResult
 	}
 
 	for _, f := range r.fnms {
-		// Match A
 		if f.Did == numA {
 			logrus.Infof("Call-ID: %s — FNM A match: id=%s did=%s nexthop=%s",
 				callID, f.ID, f.Did, f.NextHop)
 			res.A = &f
 		}
 
-		// Match B
 		if f.Did == numB {
 			logrus.Infof("Call-ID: %s — FNM B match: id=%s did=%s nexthop=%s",
 				callID, f.ID, f.Did, f.NextHop)

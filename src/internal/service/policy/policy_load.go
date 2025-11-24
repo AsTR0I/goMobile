@@ -123,7 +123,6 @@ func (l *PolicyLoader) parseCSV(filePath string) ([]Policy, error) {
 	return policies, nil
 }
 
-// compileRegexp компилирует регулярку и кэширует при необходимости
 func compileRegexp(pattern string) (*regexp.Regexp, error) {
 	return regexp.Compile(pattern)
 }

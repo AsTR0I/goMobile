@@ -26,3 +26,5 @@
 - [`internal/types`](docs/modules/types.md) — модели и структуры
 
 ---
+
+[Swagger Online](https://AsTR0I.github.io/goMobile/swagger/index.html)

@@ -184,9 +184,9 @@ func getConfigInfo() string {
 func formatConfig(sections []types.ConfigSection, colors *types.ColorSet) string {
 	var result string
 	for _, sec := range sections {
-		result += colors.White(fmt.Sprintf("\n%s\n", strings.ToUpper(sec.Name))) // заголовок секции
+		result += colors.White(fmt.Sprintf("\n%s\n", strings.ToUpper(sec.Name)))
 
-		// находим максимальную длину label для выравнивания
+		// находим длину label для выравнивания
 		maxLabel := 0
 		for _, f := range sec.Fields {
 			if len(f.Label) > maxLabel {

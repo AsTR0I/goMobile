@@ -73,10 +73,6 @@ func (s *SIPServer) Start() error {
 	return nil
 }
 
-//////////////////////////////////////////////////////
-// Парсинг SIP сообщения
-//////////////////////////////////////////////////////
-
 func (s *SIPServer) parseRequest(req *sip.Request) *SIPMsgMeta {
 	callID := ""
 	if h := req.CallID(); h != nil {
@@ -109,10 +105,6 @@ func (s *SIPServer) parseRequest(req *sip.Request) *SIPMsgMeta {
 	}
 }
 
-//////////////////////////////////////////////////////
-// Хендлеры
-//////////////////////////////////////////////////////
-
 func (s *SIPServer) handleOptions(req *sip.Request, tx sip.ServerTransaction) {
 	start := time.Now()
 
@@ -137,7 +129,7 @@ func (s *SIPServer) handleInvite(req *sip.Request, tx sip.ServerTransaction) {
 		resp100 := sip.NewResponseFromRequest(req, 100, "Trying", nil)
 		resp100.AppendHeader(sip.NewHeader("X-Elapsed-Time", fmt.Sprintf("%dms", time.Since(start).Milliseconds())))
 		s.decorateResponse(resp100)
-		_ = tx.Respond(resp100) // повторять 100 Trying не нужно
+		_ = tx.Respond(resp100)
 		logrus.Infof("Call-ID: %s 100 Trying sent", meta.CallID)
 	}
 
@@ -282,8 +274,8 @@ func extractInviteData(req *sip.Request) (numA, numB, numC, callID, srcIP, sbcIP
 	diversionHeader := req.GetHeader("Diversion")
 	if diversionHeader != nil {
 		numC = diversionHeader.Value()
-		numC = strings.Split(numC, ",")[0] // берём первый URI, если их несколько
-		numC = strings.Trim(numC, "<>")    // убираем < и >
+		numC = strings.Split(numC, ",")[0]
+		numC = strings.Trim(numC, "<>")
 		numC = ExtractNumber(numC)
 	} else {
 		numC = ""

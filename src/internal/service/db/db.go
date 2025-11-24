@@ -55,7 +55,6 @@ func (s *storage) GetFullSimDataByDid(ctx context.Context, did string) (*Simcard
 		Preload("HostOperator").
 		Where("iccid = ?", sim.Iccid).
 		First(&sim.MvnoIccid).Error; err != nil {
-		// mvno_iccid могут не найти — это ОК
 		sim.MvnoIccid = nil
 	}
 
