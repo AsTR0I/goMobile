@@ -3,10 +3,12 @@ package db
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/sirupsen/logrus"
 	"gorm.io/driver/mysql"
 	"gorm.io/gorm"
+	"gorm.io/gorm/logger"
 )
 
 func NewStorage(host string, port int, user, pass, dbname string) (Storage, error) {
@@ -22,7 +24,17 @@ func NewStorage(host string, port int, user, pass, dbname string) (Storage, erro
 
 	logrus.Debug(dsn)
 
-	gdb, err := gorm.Open(mysql.Open(dsn), &gorm.Config{})
+	gdb, err := gorm.Open(mysql.Open(dsn), &gorm.Config{
+		Logger: logger.New(
+			logrus.StandardLogger(), // адаптер к logrus
+			logger.Config{
+				SlowThreshold:             time.Second,
+				LogLevel:                  logger.Silent, // Silent, Info, Warn, Error
+				IgnoreRecordNotFoundError: false,
+				Colorful:                  false,
+			},
+		),
+	})
 	if err != nil {
 		return nil, err
 	}

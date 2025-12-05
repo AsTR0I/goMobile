@@ -1,33 +1,29 @@
 package policy
 
 import (
-	"gomobile/internal/service/db"
 	"net"
 	"regexp"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/sirupsen/logrus"
 )
 
 type Policy struct {
-	ID          int
-	State       int
-	Description string
-	Priority    int
-	NumA        *regexp.Regexp
-	NumB        *regexp.Regexp
-	NumC        *regexp.Regexp
-	SrcIP       []*net.IPNet
-	SbcIP       []*net.IPNet
-	PeriodStart int64
-	PeriodStop  int64
-	Target      string
-
-	SrcType     string // "mcn"
-	RequireSimA *bool  // nil=ignore, true=должен быть, false=не должен быть
-	RequireSimB *bool
-	OperatorB   string // "MCN"
+	ID           int
+	State        int
+	Description  string
+	Priority     int
+	NumA         *regexp.Regexp
+	NumB         *regexp.Regexp
+	NumC         *regexp.Regexp
+	SrcIP        []*net.IPNet
+	SbcIP        []*net.IPNet
+	PeriodStart  int64
+	PeriodStop   int64
+	Target       string
+	MatchCounter int32
 }
 
 type PolicyRepository struct {
@@ -68,32 +64,69 @@ func (r *PolicyRepository) GetLastLoadTime() time.Time {
 	return r.lastLoad
 }
 
-func (r *PolicyRepository) FindBestPolicy(numA, numB, numC string, unixTime int64, srcIP, sbcIP, callID string, simA, simB *db.Simcard) *Policy {
-	logrus.Infof("Call-ID: %s — Searching best policy for NumA=%s, NumB=%s, NumC=%s, Time=%d, SrcIP=%s, SbcIP=%s",
-		callID, numA, numB, numC, unixTime, srcIP, sbcIP)
+func (r *PolicyRepository) FindBestPolicy(numA, numB, numC string, unixTime int64, srcIP, sbcIP, callID string) *Policy {
+	start := time.Now()
 
-	logrus.Infof("Call-ID: %s — Total policies to evaluate: %d", callID, len(r.policies))
-	logrus.Debugf("Call-ID: %s — Policies detail: %+v", callID, r.policies)
-	for i, p := range r.policies {
-		if unixTime < p.PeriodStart || unixTime > p.PeriodStop {
-			logrus.Debugf("Call-ID: %s — Skipping policy ID %d: outside active period (%d - %d)", callID, p.ID, p.PeriodStart, p.PeriodStop)
-			continue
-		}
-
-		if !p.NumA.MatchString(numA) || !p.NumB.MatchString(numB) || !p.NumC.MatchString(numC) || !ipInRange(srcIP, p.SrcIP, callID) || !ipInRange(sbcIP, p.SbcIP, callID) {
-			logrus.Debugf("Call-ID: %s — Skipping policy ID %d", callID, p.ID)
-			continue
-		}
-
-		logrus.Infof("Call-ID: %s — Found matching policy ID %d", callID, p.ID)
-		return &r.policies[i]
+	type result struct {
+		policy   *Policy
+		index    int
+		priority int
 	}
 
-	logrus.Warnf("Call-ID: %s — No matching policy found", callID)
-	return nil
+	results := make(chan result, len(r.policies))
+	var wg sync.WaitGroup
+
+	for i, p := range r.policies {
+		wg.Add(1)
+		go func(idx int, pol Policy) {
+			defer wg.Done()
+
+			if unixTime < pol.PeriodStart || unixTime > pol.PeriodStop {
+				return
+			}
+			if !ipInRange(srcIP, pol.SrcIP, callID) || !ipInRange(sbcIP, pol.SbcIP, callID) {
+				return
+			}
+			if !pol.NumA.MatchString(numA) || !pol.NumB.MatchString(numB) || !pol.NumC.MatchString(numC) {
+				return
+			}
+
+			results <- result{
+				policy:   &pol,
+				index:    idx,
+				priority: pol.Priority,
+			}
+		}(i, p)
+	}
+
+	go func() {
+		wg.Wait()
+		close(results)
+	}()
+
+	var best *Policy
+	maxPriority := -1
+
+	for res := range results {
+		polPtr := &r.policies[res.index]
+		if res.priority > maxPriority {
+			maxPriority = res.priority
+			best = polPtr
+		}
+	}
+
+	if best != nil {
+		atomic.AddInt32(&best.MatchCounter, 1)
+		elapsed := float64(time.Since(start).Microseconds()) / 1000.0
+		logrus.Infof("Call-ID: %s — Best policy ID %d found with priority %d, search time %.3f ms", callID, best.ID, best.Priority, elapsed)
+	}
+
+	return best
 }
 
 func ipInRange(ipStr string, ranges []*net.IPNet, callID string) bool {
+	start := time.Now()
+
 	ip := net.ParseIP(ipStr)
 	if ip == nil {
 		logrus.Infof("Call-ID: %s — Invalid IP: %s", callID, ipStr)
@@ -101,14 +134,20 @@ func ipInRange(ipStr string, ranges []*net.IPNet, callID string) bool {
 	}
 
 	for _, ipNet := range ranges {
-		logrus.Debug("Call-ID: %s — Checking if IP %s is in range %s", callID, ipStr, ipNet.String())
+		logrus.Debugf("Call-ID: %s — Checking if IP %s is in range %s", callID, ipStr, ipNet.String())
 
 		if ipNet.Contains(ip) {
-			logrus.Debug("Call-ID: %s — IP %s matched range %s", callID, ipStr, ipNet.String())
+			logrus.Debugf("Call-ID: %s — IP %s matched range %s", callID, ipStr, ipNet.String())
+
+			elapsed := float64(time.Since(start).Microseconds()) / 1000.0
+			logrus.Debugf("Call-ID: %s — ipInRange() search time: %.3f ms", callID, elapsed)
+
 			return true
 		}
 	}
 
-	logrus.Debug("Call-ID: %s — IP %s did not match any provided ranges", callID, ipStr)
+	elapsed := float64(time.Since(start).Microseconds()) / 1000.0
+	logrus.Debugf("Call-ID: %s — IP %s did not match any provided ranges. ipInRange() search time: %.3f ms", callID, ipStr, elapsed)
+
 	return false
 }

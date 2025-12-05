@@ -2,6 +2,9 @@
 // @version 25.11.24
 // @description SIP Simulation and Policy Engine for internal debugging.
 // @BasePath /
+// @securityDefinitions.apikey ApiKeyAuth
+// @in query
+// @name token
 
 // swag - swag init -g cmd/goMobile/main.go
 package main
@@ -12,7 +15,6 @@ import (
 	"os"
 	"strings"
 
-	"gomobile/internal/service/db"
 	"gomobile/internal/service/fnm"
 	"gomobile/internal/service/logic"
 	"gomobile/internal/service/policy"
@@ -33,11 +35,15 @@ func main() {
 	// configuration initialization
 	if err := InitConfig(); err != nil {
 		fmt.Printf("error initializing config: %s", err.Error())
+		logrus.Fatalf("error initializing config: %s", err.Error())
+		os.Exit(1)
 	}
 
 	// load env variables
 	if err := godotenv.Load(); err != nil {
 		fmt.Printf("error loading env variables: %s", err.Error())
+		logrus.Fatalf("error loading env variables: %s", err.Error())
+		os.Exit(1)
 	}
 
 	// logger initialization
@@ -51,15 +57,14 @@ func main() {
 	}
 	if err := logger.Init(logDir, retain); err != nil {
 		logrus.Fatalf("failed to initialize logger: %v", err)
+		os.Exit(1)
 	}
 	defer logger.Close()
 
-	startingMessage()
-
 	policiesRepo := policy.NewPolicyRepository()
-	loader := policy.NewPolicyLoader(policiesRepo)
+	policyLoader := policy.NewPolicyLoader(policiesRepo)
 	policyDir := viper.GetString("data.policy.policy_dir")
-	if err := loader.LoadLatestFromDir(policyDir); err != nil {
+	if err := policyLoader.LoadLatestFromDir(policyDir); err != nil {
 		fmt.Printf("Failed to load policies: %v", err)
 		logrus.Fatalf("Failed to load policies: %v", err)
 	}
@@ -67,28 +72,42 @@ func main() {
 	fnmRepo := fnm.NewFnmRepository()
 	fnmLoader := fnm.NewFnmLoader(fnmRepo)
 	fnmDir := viper.GetString("data.fnm.fnm_dir")
+	fnmAPI := viper.GetString("data.fnm.api")
 
-	if err := fnmLoader.LoadLatestFromDir(fnmDir); err != nil {
-		logrus.Fatalf("Failed to load FNM: %v", err)
-	}
-
-	mysql_host := viper.GetString("services.db.mysql.host")
-	mysql_port := viper.GetInt("services.db.mysql.port")
-	mysql_user := viper.GetString("services.db.mysql.user")
-	mysql_db := viper.GetString("services.db.mysql.database")
-
-	mysql_pass := os.Getenv("MYSQL_PASSWORD")
-	if mysql_pass == "" {
-		logrus.Fatal("MYSQL_PASSWORD is not set")
-	}
-
-	storage, err := db.NewStorage(mysql_host, mysql_port, mysql_user, mysql_pass, mysql_db)
+	// Сначала пытаемся загрузить из файла
+	err := fnmLoader.LoadLatestFromDir(fnmDir)
 	if err != nil {
-		fmt.Sprintf("failed to init DB: %v", err)
-		logrus.Fatalf("failed to init DB: %v", err)
+		logrus.Warnf("No local FNM file found or failed to load: %v", err)
+		logrus.Infof("Loading FNM from API: %s", fnmAPI)
+
+		// Если файла нет, идем в api
+		if apiErr := fnmLoader.LoadFromAPI(fnmAPI, fnmDir); apiErr != nil {
+			logrus.Fatalf("Failed to load FNM from API: %v", apiErr)
+		}
+	} else {
+		logrus.Infof("Loaded FNM from local file successfully")
 	}
 
-	bl := logic.NewBusinessLogic(policiesRepo, fnmRepo, storage)
+	// storage - db
+	// mysql_host := viper.GetString("services.db.mysql.host")
+	// mysql_port := viper.GetInt("services.db.mysql.port")
+	// mysql_user := viper.GetString("services.db.mysql.user")
+	// mysql_db := viper.GetString("services.db.mysql.database")
+
+	// mysql_pass := os.Getenv("MYSQL_PASSWORD")
+	// if mysql_pass == "" {
+	// 	logrus.Fatal("MYSQL_PASSWORD is not set")
+	// }
+
+	// storage, err := db.NewStorage(mysql_host, mysql_port, mysql_user, mysql_pass, mysql_db)
+	// if err != nil {
+	// 	fmt.Sprintf("failed to init DB: %v", err)
+	// 	logrus.Fatalf("failed to init DB: %v", err)
+	// }
+
+	startingMessage()
+
+	bl := logic.NewBusinessLogic(policiesRepo, fnmRepo)
 
 	sipPort := viper.GetInt("sipserver.port")
 	sipSrv := sipserver.New(sipPort, bl)

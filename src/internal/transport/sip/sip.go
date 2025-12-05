@@ -112,7 +112,7 @@ func (s *SIPServer) handleOptions(req *sip.Request, tx sip.ServerTransaction) {
 	logrus.Infof("Call-ID: %s OPTIONS from %s", meta.CallID, meta.Source)
 
 	resp := sip.NewResponseFromRequest(req, 200, "OK", nil)
-	resp.AppendHeader(sip.NewHeader("X-Elapsed-Time", fmt.Sprintf("%dms", time.Since(start).Milliseconds())))
+	resp.AppendHeader(sip.NewHeader("X-Elapsed-Time", fmt.Sprintf("%.3fms", float64(time.Since(start).Microseconds())/1000)))
 	s.decorateResponse(resp)
 	if err := tx.Respond(resp); err != nil {
 		logrus.Errorf("Call-ID: %s Failed to send OPTIONS: %v", meta.CallID, err)
@@ -122,12 +122,12 @@ func (s *SIPServer) handleOptions(req *sip.Request, tx sip.ServerTransaction) {
 func (s *SIPServer) handleInvite(req *sip.Request, tx sip.ServerTransaction) {
 	meta := s.parseRequest(req)
 	logrus.Infof("Call-ID: %s INVITE received from %s", meta.CallID, meta.Source)
+	start := time.Now()
 
 	// 100 Trying
 	{
-		start := time.Now()
 		resp100 := sip.NewResponseFromRequest(req, 100, "Trying", nil)
-		resp100.AppendHeader(sip.NewHeader("X-Elapsed-Time", fmt.Sprintf("%dms", time.Since(start).Milliseconds())))
+		resp100.AppendHeader(sip.NewHeader("X-Elapsed-Time", fmt.Sprintf("%.3fms", float64(time.Since(start).Microseconds())/1000)))
 		s.decorateResponse(resp100)
 		_ = tx.Respond(resp100)
 		logrus.Infof("Call-ID: %s 100 Trying sent", meta.CallID)
@@ -135,7 +135,8 @@ func (s *SIPServer) handleInvite(req *sip.Request, tx sip.ServerTransaction) {
 
 	// 302 Redirect (будет ретранслироваться автоматически на UDP до получения ACK)
 	{
-		start := time.Now()
+		ruri := req.Recipient.Endpoint()
+		// logrus.Infof("Call-ID: %s R-URI: %s", meta.CallID, ruri)
 
 		numA, numB, numC, callID, srcIP, sbcIP, start, err := extractInviteData(req)
 		if err != nil {
@@ -149,35 +150,43 @@ func (s *SIPServer) handleInvite(req *sip.Request, tx sip.ServerTransaction) {
 		}
 		unixTime := time.Now().Unix()
 
-		result := s.logic.FindPolicyResult(numA, numB, numC, srcIP, sbcIP, callID, unixTime)
+		result := s.logic.FindPolicyResult(numA, numB, numC, srcIP, sbcIP, callID, ruri, unixTime)
 
 		switch result.Target {
 		case "Bad Gateway":
 			resp := sip.NewResponseFromRequest(req, 502, "Bad Gateway", nil)
 			resp.AppendHeader(sip.NewHeader("Reason", result.Reason))
 			s.decorateResponse(resp)
+			resp.AppendHeader(sip.NewHeader("X-Elapsed-Time", fmt.Sprintf("%.3fms", float64(time.Since(start).Microseconds())/1000)))
+
 			if err := tx.Respond(resp); err != nil {
 				logrus.Errorf("Call-ID: %s Failed to send 502: %v", callID, err)
 			}
 		default:
-			// Используем Target как контакт для 302 Redirect
+			contacts := strings.Split(result.Target, "|")
 			resp := sip.NewResponseFromRequest(req, 302, "Moved Temporarily", nil)
-			resp.AppendHeader(sip.NewHeader("Contact", result.Target))
+
+			for _, c := range contacts {
+				c = strings.TrimSpace(c)
+				// Убираем лишний префикс Contact:, если есть
+				if strings.HasPrefix(c, "Contact:") {
+					c = strings.TrimSpace(c[8:])
+				} else if strings.HasPrefix(c, "contact:") {
+					c = strings.TrimSpace(c[8:])
+				}
+				if c != "" {
+					resp.AppendHeader(sip.NewHeader("Contact", c))
+				}
+			}
+
 			s.decorateResponse(resp)
+			resp.AppendHeader(sip.NewHeader("X-Elapsed-Time", fmt.Sprintf("%.3fms", float64(time.Since(start).Microseconds())/1000)))
+
 			if err := tx.Respond(resp); err != nil {
 				logrus.Errorf("Call-ID: %s Failed to send 302: %v", callID, err)
 			} else {
 				logrus.Infof("Call-ID: %s 302 Redirect sent to %s", callID, result.Target)
 			}
-		}
-		resp := sip.NewResponseFromRequest(req, 302, "Moved Temporarily", nil)
-		resp.AppendHeader(sip.NewHeader("Contact", "<sip:100500@1.2.3.4>"))
-		resp.AppendHeader(sip.NewHeader("X-Elapsed-Time", fmt.Sprintf("%dms", time.Since(start).Milliseconds())))
-		s.decorateResponse(resp)
-		if err := tx.Respond(resp); err != nil {
-			logrus.Errorf("Call-ID: %s Failed to send 302: %v", meta.CallID, err)
-		} else {
-			logrus.Infof("Call-ID: %s 302 Redirect", meta.CallID)
 		}
 	}
 }

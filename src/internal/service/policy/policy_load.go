@@ -21,7 +21,50 @@ func NewPolicyLoader(repo *PolicyRepository) *PolicyLoader {
 	return &PolicyLoader{repo: repo}
 }
 
+// ----- Доделать -----
+// func (l *PolicyLoader) LoadFromAPI(url string, saveDir string) error {
+// 	if err := l.ensureDir(saveDir); err != nil {
+// 		return err
+// 	}
+// 	logrus.Infof("Loading Policy from API: %s", url)
+
+// 	resp, err := http.Get(url)
+// 	if err != nil {
+// 		return fmt.Errorf("failed to GET api: %v", err)
+// 	}
+// 	defer resp.Body.Close()
+
+// 	if resp.StatusCode != 200 {
+// 		return fmt.Errorf("bad status: %v", resp.StatusCode)
+// 	}
+
+// 	body, err := io.ReadAll(resp.Body)
+// 	if err != nil {
+// 		return fmt.Errorf("failed to read body: %v", err)
+// 	}
+
+// 	var policies []Policy
+
+// 	version := time.Now().Format("20060102_150405")
+// 	filePath := filepath.Join(saveDir, fmt.Sprintf("%s.csv", version))
+
+// 	if err := os.WriteFile(filePath, body, 0644); err != nil {
+// 		logrus.Warnf("failed to save FNM JSON: %v", err)
+// 	}
+
+// 	for i := range policies {
+// 	}
+
+// 	l.repo.SetPolicies(policies, version)
+
+// 	logrus.Infof("Loaded %d Policies from API", len(policies))
+// 	return nil
+// }
+
 func (l *PolicyLoader) LoadLatestFromDir(dir string) error {
+	if err := l.ensureDir(dir); err != nil {
+		return err
+	}
 	files, err := filepath.Glob(filepath.Join(dir, "*.csv"))
 	if err != nil {
 		return fmt.Errorf("failed to list csv files: %v", err)
@@ -57,7 +100,7 @@ func (l *PolicyLoader) parseCSV(filePath string) ([]Policy, error) {
 		}
 
 		fields := strings.Split(line, ";")
-		if len(fields) < 15 {
+		if len(fields) < 11 {
 			continue
 		}
 
@@ -76,47 +119,25 @@ func (l *PolicyLoader) parseCSV(filePath string) ([]Policy, error) {
 		srcIP := parseIPRanges(fields[9])
 		sbcIP := parseIPRanges(fields[10])
 
-		srcType := fields[11]
-
-		var requireSimA, requireSimB *bool
-		if fields[12] != "" {
-			b, _ := strconv.Atoi(fields[12])
-			bb := b != 0
-			requireSimA = &bb
-		}
-		if fields[13] != "" {
-			b, _ := strconv.Atoi(fields[13])
-			bb := b != 0
-			requireSimB = &bb
-		}
-
-		operatorB := ""
-		if len(fields) > 14 {
-			operatorB = fields[14]
-		}
-
 		target := ""
-		if len(fields) > 15 {
-			target = strings.Join(fields[15:], ";")
+		if len(fields) > 11 {
+			target = strings.Join(fields[11:], ";")
 		}
 
 		policies = append(policies, Policy{
-			ID:          id,
-			State:       state,
-			Description: description,
-			Priority:    priority,
-			NumA:        numA,
-			NumB:        numB,
-			NumC:        numC,
-			SrcIP:       srcIP,
-			SbcIP:       sbcIP,
-			PeriodStart: periodStart,
-			PeriodStop:  periodStop,
-			Target:      target,
-			SrcType:     srcType,
-			RequireSimA: requireSimA,
-			RequireSimB: requireSimB,
-			OperatorB:   operatorB,
+			ID:           id,
+			State:        state,
+			Description:  description,
+			Priority:     priority,
+			NumA:         numA,
+			NumB:         numB,
+			NumC:         numC,
+			SrcIP:        srcIP,
+			SbcIP:        sbcIP,
+			PeriodStart:  periodStart,
+			PeriodStop:   periodStop,
+			Target:       target,
+			MatchCounter: 0,
 		})
 	}
 
@@ -147,4 +168,14 @@ func parseIPRanges(field string) []*net.IPNet {
 		ranges = append(ranges, ipnet)
 	}
 	return ranges
+}
+
+func (l *PolicyLoader) ensureDir(dir string) error {
+	if _, err := os.Stat(dir); os.IsNotExist(err) {
+		logrus.Infof("Directory %s does not exist, creating...", dir)
+		if mkErr := os.MkdirAll(dir, 0755); mkErr != nil {
+			return fmt.Errorf("failed to create directory %s: %v", dir, mkErr)
+		}
+	}
+	return nil
 }

@@ -1,11 +1,14 @@
 package fnm
 
 import (
+	"encoding/json"
 	"fmt"
+	"io"
+	"net/http"
 	"os"
 	"path/filepath"
 	"sort"
-	"strings"
+	"time"
 
 	"github.com/sirupsen/logrus"
 )
@@ -18,76 +21,121 @@ func NewFnmLoader(repo *FnmRepository) *FnmLoader {
 	return &FnmLoader{repo: repo}
 }
 
+func (l *FnmLoader) LoadFromAPI(url string, saveDir string) error {
+	if err := l.ensureDir(saveDir); err != nil {
+		return err
+	}
+	logrus.Infof("Loading FNM from API: %s", url)
+
+	resp, err := http.Get(url)
+	if err != nil {
+		return fmt.Errorf("failed to GET api: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != 200 {
+		return fmt.Errorf("bad status: %v", resp.StatusCode)
+	}
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return fmt.Errorf("failed to read body: %v", err)
+	}
+
+	var fnms []Fnm
+	if err := json.Unmarshal(body, &fnms); err != nil {
+		return fmt.Errorf("failed to unmarshal API response: %v", err)
+	}
+
+	version := time.Now().Format("20060102_150405")
+	filePath := filepath.Join(saveDir, fmt.Sprintf("%s.json", version))
+
+	if err := os.WriteFile(filePath, body, 0644); err != nil {
+		logrus.Warnf("failed to save FNM JSON: %v", err)
+	}
+
+	for i := range fnms {
+		if err := json.Unmarshal([]byte(fnms[i].TenantRaw), &fnms[i].Tenant); err != nil {
+			logrus.Warnf("failed to parse tenant for msisdn=%s: %v", fnms[i].Msisdn, err)
+		}
+	}
+
+	l.repo.SetFnms(fnms, version)
+
+	logrus.Infof("Loaded %d FNM items from API", len(fnms))
+	return nil
+}
+
 func (l *FnmLoader) LoadLatestFromDir(dir string) error {
+	if err := l.ensureDir(dir); err != nil {
+		return err
+	}
 	logrus.Infof("Loading FNM from directory: %s", dir)
 
-	files, err := filepath.Glob(filepath.Join(dir, "*.csv"))
+	files, err := filepath.Glob(filepath.Join(dir, "*.json"))
 	if err != nil {
-		return fmt.Errorf("failed to list csv: %v", err)
+		return fmt.Errorf("failed to list json: %v", err)
 	}
 
 	if len(files) == 0 {
-		return fmt.Errorf("no csv files in %s", dir)
+		return fmt.Errorf("no json files in %s", dir)
 	}
 
 	sort.Strings(files)
-	latestFile := files[len(files)-1]
+	latest := files[len(files)-1]
 
-	logrus.Infof("Latest CSV file: %s", latestFile)
+	logrus.Infof("Latest JSON: %s", latest)
 
-	fnms, err := l.parseCSV(latestFile)
+	fnms, err := l.parseJSON(latest)
 	if err != nil {
 		return err
 	}
 
-	version := filepath.Base(latestFile)
+	version := filepath.Base(latest)
+
+	for i := range fnms {
+		if err := json.Unmarshal([]byte(fnms[i].TenantRaw), &fnms[i].Tenant); err != nil {
+			logrus.Warnf("failed to parse tenant for msisdn=%s: %v", fnms[i].Msisdn, err)
+		}
+	}
+
 	l.repo.SetFnms(fnms, version)
 
-	logrus.Infof("Loaded %d FNM records from %s", len(fnms), latestFile)
+	logrus.Infof("Loaded %d FNM items from file %s", len(fnms), latest)
 	return nil
 }
 
-func (l *FnmLoader) parseCSV(filePath string) ([]Fnm, error) {
-	logrus.Infof("Parsing CSV: %s", filePath)
+func (l *FnmLoader) parseJSON(path string) ([]Fnm, error) {
+	logrus.Infof("Parsing JSON: %s", path)
 
-	content, err := os.ReadFile(filePath)
+	data, err := os.ReadFile(path)
 	if err != nil {
-		logrus.Errorf("Failed to read %s: %v", filePath, err)
-		return nil, err
+		return nil, fmt.Errorf("failed to read JSON file: %v", err)
 	}
 
-	lines := strings.Split(string(content), "\n")
 	var fnms []Fnm
-
-	for i, line := range lines {
-		line = strings.TrimSpace(line)
-		if line == "" {
-			continue
-		}
-
-		if i == 0 && strings.Contains(line, "id,did,nexthop") {
-			continue
-		}
-
-		fields := strings.Split(line, ",")
-		if len(fields) < 3 {
-			logrus.Warnf("Skipping invalid line %d: %s", i+1, line)
-			continue
-		}
-
-		id := strings.TrimSpace(fields[0])
-		did := strings.TrimSpace(fields[1])
-		nextHop := strings.TrimSpace(fields[2])
-
-		fnms = append(fnms, Fnm{
-			ID:      id,
-			Did:     did,
-			NextHop: nextHop,
-		})
-
-		logrus.Debugf("Loaded FNM: id=%s did=%s", id, did)
+	if err := json.Unmarshal(data, &fnms); err != nil {
+		return nil, fmt.Errorf("failed to parse JSON: %v", err)
 	}
 
-	logrus.Infof("Finished parsing FNM. Total: %d", len(fnms))
+	logrus.Infof("Parsed %d FNM items from JSON", len(fnms))
 	return fnms, nil
+}
+
+func (l *FnmLoader) ensureDir(dir string) error {
+	if _, err := os.Stat(dir); os.IsNotExist(err) {
+		logrus.Infof("Directory %s does not exist, creating...", dir)
+		if mkErr := os.MkdirAll(dir, 0755); mkErr != nil {
+			return fmt.Errorf("failed to create directory %s: %v", dir, mkErr)
+		}
+	}
+	return nil
+}
+
+func (l *FnmLoader) parseTenants(fnms []Fnm) {
+	for i := range fnms {
+		if err := json.Unmarshal([]byte(fnms[i].TenantRaw), &fnms[i].Tenant); err != nil {
+			logrus.Warnf("failed to parse tenant for msisdn=%s: %v", fnms[i].Msisdn, err)
+		}
+	}
 }

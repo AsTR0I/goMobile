@@ -2,14 +2,25 @@ package http
 
 import (
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
 	"github.com/emiago/sipgo/sip"
 	"github.com/gin-gonic/gin"
+	"github.com/sirupsen/logrus"
 )
 
 func (h *HTTPServer) initRoutes() {
+	cwd, err := os.Getwd()
+	if err != nil {
+		logrus.Fatalf("failed to get working directory: %v", err)
+	}
+
+	swaggerPath := filepath.Join(cwd, "docs", "swagger")
+	logrus.Infof("Serving swagger from: %s", swaggerPath)
+	h.engine.Static("/swagger", swaggerPath)
 	h.engine.GET("/simulation", h.handleSimulate)
 }
 
@@ -66,6 +77,7 @@ func ParseSIPHeaders(packet string) []SIPHeader {
 // @Param        c_number   query string false "C-number (Diversion)"
 // @Param        src_ip     query string true  "Источник SIP пакета (X-SrcIP)"
 // @Param        sbc_ip     query string false "IP SBC (по умолчанию 0.0.0.0)"
+// @Security     ApiKeyAuth
 // @Success      200 {object} InviteDebugResponse "Успешная симуляция"
 // @Failure      500 {object} map[string]string  "Ошибка обработки URI или другого системного компонента"
 // @Router       /simulation [get]
@@ -104,7 +116,9 @@ func (h *HTTPServer) handleSimulate(c *gin.Context) {
 	}
 
 	unixTime := time.Now().Unix()
-	result := h.logic.FindPolicyResult(aNumber, bNumber, cNumber, srcIP, sbcIP, callID, unixTime)
+	ruri := fmt.Sprintf("sip:%s@%s", bNumber, srcIP)
+
+	result := h.logic.FindPolicyResult(aNumber, bNumber, cNumber, srcIP, sbcIP, ruri, callID, unixTime)
 
 	var respMsg *sip.Response
 	elapsed := fmt.Sprintf("%dms", time.Since(start).Milliseconds())

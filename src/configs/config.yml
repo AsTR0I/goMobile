@@ -8,12 +8,13 @@ logging:
   directory: logs
   retain_days: 2
 flags:
-  debug: true
+  debug: false
 data:
   policy:
     api: "http://localhost:8080/policy"
     policy_dir: "temp/backup/policies"
   fnm:
+    api: "https://astro.dev.monicajs.cocobri.ru/gomobile/fnm?token=ecc7578b77e6a158c15005755f06d739ce9f8897d07f230e6017aac9ba398690"
     fnm_dir: temp/backup/fnms
 services:
   db:

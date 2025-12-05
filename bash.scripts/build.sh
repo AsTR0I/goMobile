@@ -3,7 +3,7 @@
 # Directories
 
 # /var/www/scripts/goMobile/
-SRC_DIR="$(pwd)/../src/cmd/goMobile"
+SRC_DIR="$(pwd)/../src/cmd"
 PUBLIC_DIR="$(pwd)/../public"
 BIN_DIR="$PUBLIC_DIR/bin"
 BUILD_DIR="$PUBLIC_DIR/builds"

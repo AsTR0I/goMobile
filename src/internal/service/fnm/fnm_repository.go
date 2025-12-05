@@ -1,6 +1,7 @@
 package fnm
 
 import (
+	"encoding/json"
 	"sync"
 	"time"
 
@@ -8,42 +9,72 @@ import (
 )
 
 type Fnm struct {
-	ID      string
-	Did     string
-	NextHop string
+	Msisdn         string `json:"msisdn"`
+	Iccid          string `json:"iccid"`
+	TenantRaw      string `json:"tenant"`
+	Tenant         Tenant
+	InternalNumber string `json:"internal_number"`
 }
 
+type Tenant struct {
+	Account struct {
+		ID          json.Number `json:"id"`
+		AccessCode  string      `json:"access_code"`
+		Voicenumber string      `json:"voicenumber"`
+		Pincode     string      `json:"pincode"`
+	} `json:"account"`
+	Service struct {
+		Type string `json:"type"`
+		Node string `json:"node"`
+	} `json:"service"`
+}
+
+// FnmRepository хранит FNM записи в map по Msisdn
 type FnmRepository struct {
 	mutex    sync.RWMutex
-	fnms     []Fnm
+	fnms     map[string]*Fnm
 	version  string
 	lastLoad time.Time
 }
 
-type FnmMatchResult struct {
-	A *Fnm
-	B *Fnm
-}
-
+// NewFnmRepository создает новый репозиторий
 func NewFnmRepository() *FnmRepository {
-	return &FnmRepository{}
+	return &FnmRepository{
+		fnms: make(map[string]*Fnm),
+	}
 }
 
+// SetFnms сохраняет FNM записи в map и обновляет версию и время
 func (r *FnmRepository) SetFnms(fnms []Fnm, version string) {
 	r.mutex.Lock()
 	defer r.mutex.Unlock()
 
-	r.fnms = fnms
+	m := make(map[string]*Fnm, len(fnms))
+	for i := range fnms {
+		f := fnms[i]
+		m[f.Msisdn] = &f
+	}
+
+	r.fnms = m
 	r.version = version
 	r.lastLoad = time.Now()
+
+	logrus.Infof("FnmRepository updated: %d items, version=%s", len(fnms), version)
 }
 
+// GetFnms возвращает все FNM записи
 func (r *FnmRepository) GetFnms() []Fnm {
 	r.mutex.RLock()
 	defer r.mutex.RUnlock()
-	return r.fnms
+
+	fnms := make([]Fnm, 0, len(r.fnms))
+	for _, f := range r.fnms {
+		fnms = append(fnms, *f)
+	}
+	return fnms
 }
 
+// GetVersion возвращает текущую версию FNM
 func (r *FnmRepository) GetVersion() string {
 	r.mutex.RLock()
 	defer r.mutex.RUnlock()
@@ -56,39 +87,25 @@ func (r *FnmRepository) GetLastLoadTime() time.Time {
 	return r.lastLoad
 }
 
-func (r *FnmRepository) FindFnmMatches(numA, numB, callID string) FnmMatchResult {
-	logrus.Infof("Call-ID: %s — Searching FNM (A=%s, B=%s)", callID, numA, numB)
+func (r *FnmRepository) FindFnm(num, callID string) *Fnm {
+	logrus.Infof("Call-ID: %s — Searching FNM num=%s", callID, num)
 
 	r.mutex.RLock()
 	defer r.mutex.RUnlock()
 
-	res := FnmMatchResult{}
-
 	if len(r.fnms) == 0 {
 		logrus.Warnf("Call-ID: %s — No FNM records loaded", callID)
-		return res
+		return nil
 	}
 
-	for _, f := range r.fnms {
-		if f.Did == numA {
-			logrus.Infof("Call-ID: %s — FNM A match: id=%s did=%s nexthop=%s",
-				callID, f.ID, f.Did, f.NextHop)
-			res.A = &f
-		}
-
-		if f.Did == numB {
-			logrus.Infof("Call-ID: %s — FNM B match: id=%s did=%s nexthop=%s",
-				callID, f.ID, f.Did, f.NextHop)
-			res.B = &f
-		}
+	if f, ok := r.fnms[num]; ok {
+		logrus.Infof(
+			"Call-ID: %s — FNM match: msisdn=%s internal=%s",
+			callID, f.Msisdn, f.InternalNumber,
+		)
+		return f
 	}
 
-	if res.A == nil {
-		logrus.Warnf("Call-ID: %s — No FNM match for NumA=%s", callID, numA)
-	}
-	if res.B == nil {
-		logrus.Warnf("Call-ID: %s — No FNM match for NumB=%s", callID, numB)
-	}
-
-	return res
+	logrus.Warnf("Call-ID: %s — No FNM match for Num=%s", callID, num)
+	return nil
 }
